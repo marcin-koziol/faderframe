@@ -4,12 +4,20 @@ name: Release
 # DMGs (macOS on Apple Silicon and Intel), an installer and a portable zip
 # (Windows; with the program's symbols, for crash reports). A tag
 # `v*` publishes them as a GitHub release; a manual run keeps them as
-# workflow artifacts.
+# workflow artifacts. A push to `staging` (the fork's branch with every
+# change of its own merged in: scripts/staging.sh) replaces the "staging"
+# pre-release.
 
 on:
   push:
     tags: ["v*"]
+    branches: [staging]
   workflow_dispatch:
+
+# A newer push to staging stops the build of the older one.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/staging' }}
 
 permissions:
   contents: read
@@ -210,3 +218,43 @@ jobs:
               --title "FaderFrame ${GITHUB_REF_NAME#v}" \
               --notes-file release-notes.md
           fi
+
+  staging:
+    name: Publish staging
+    # Whatever was built, even if one platform failed.
+    if: ${{ !cancelled() && github.ref == 'refs/heads/staging' }}
+    needs: [flatpak, linux-tarball, macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Notes
+        run: |
+          git fetch -q https://github.com/BurningTreeC/faderframe main
+          {
+            echo "Upstream's main ($(git log -1 --format='%h, %s' FETCH_HEAD)) with the fork's changes merged in:"
+            echo
+            git log --no-merges --format='- %s' FETCH_HEAD..HEAD | grep -v '^- Staging:'
+            echo
+            echo "Built from $GITHUB_SHA. Not a release: for trying the changes out."
+          } > notes.md
+          cat notes.md
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Pre-release "staging"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l artifacts
+          gh release delete staging --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          gh release create staging artifacts/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "FaderFrame staging ($(git log -1 --format=%cs) · ${GITHUB_SHA::7})" \
+            --notes-file notes.md
