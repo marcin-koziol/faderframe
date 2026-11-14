@@ -1,0 +1,20 @@
+# Branches of the fork merged into `staging` (scripts/staging.sh), in this
+# order. Drop one once upstream has merged it.
+metronome-toolbar-menu        # PR 65
+sandbox-stall-tolerance       # PR 69
+readme-restructure            # PR 70
+folder-bus-header-meter       # PR 71
+mix-intelligence-apply-into   # PR 72 + 73
+ci-gstreamer-1-24             # PR 76
+remember-clip-envelopes       # PR 77
+unused-media-own-files        # PR 81
+solo-dim                      # PR 83
+resize-selected-tracks        # PR 84
+rustfmt-1-100                 # PR 85
+mix-intelligence-parts        # PR 86
+mix-intelligence-roles        # PR 88
+popover-parent-lifetime       # PR 89
+lv2-windows                   # LV2 on Windows (PR to come; its workflow only builds that branch)
+plugin-param-groups           # generic editor: "/" in a name is not a group
+windows-simple-im             # Windows: GTK_IM_MODULE=gtk-im-context-simple by default
+follower-retry-unlocked       # #94: the UI no longer waits while a device is reopened
