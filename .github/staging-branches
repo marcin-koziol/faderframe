@@ -1,0 +1,13 @@
+# Branches of the fork merged into `staging` (scripts/staging.sh), in this
+# order. Drop one once upstream has merged it.
+metronome-toolbar-menu        # PR 65
+sandbox-stall-tolerance       # PR 69
+readme-restructure            # PR 70
+folder-bus-header-meter       # PR 71
+mix-intelligence-apply-into   # PR 72 + 73
+ci-gstreamer-1-24             # PR 76
+remember-clip-envelopes       # PR 77
+unused-media-own-files        # PR 81
+solo-dim                      # PR 83
+resize-selected-tracks        # PR 84
+rustfmt-1-100                 # PR 85
