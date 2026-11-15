@@ -84,6 +84,21 @@ impl Ui {
         self.class == format!("{UI}X11UI")
     }
 
+    /// Embeds into a Win32 window (`ui:WindowsUI`).
+    pub fn is_windows(&self) -> bool {
+        self.class == format!("{UI}WindowsUI")
+    }
+
+    /// Embeds into this platform's windows: Win32 on Windows, X11
+    /// elsewhere.
+    pub fn is_native(&self) -> bool {
+        if cfg!(windows) {
+            self.is_windows()
+        } else {
+            self.is_x11()
+        }
+    }
+
     /// Shows a window of its own (kxstudio's external UI, or the older
     /// one it replaced).
     pub fn is_external(&self) -> bool {
@@ -454,6 +469,8 @@ pub fn bundle_graph(bundle: &Path) -> Result<Graph, String> {
         .chain(
             [
                 format!("{UI}X11UI"),
+                format!("{UI}WindowsUI"),
+                format!("{UI}CocoaUI"),
                 format!("{UI}GtkUI"),
                 format!("{UI}Gtk3UI"),
                 format!("{UI}Qt5UI"),
