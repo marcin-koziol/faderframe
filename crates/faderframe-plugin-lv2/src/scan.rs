@@ -384,7 +384,9 @@ impl Lv2Plugin {
     }
 }
 
-/// The LV2 path: `$LV2_PATH`, or a portable installation's `Plug-Ins/LV2`,
+/// The LV2 path: `$LV2_PATH`, or a portable installation's `Plug-Ins/LV2`
+/// and the platform's places — on Windows `%APPDATA%\LV2` and
+/// `%COMMONPROGRAMFILES%\LV2` (the LV2 specification's), elsewhere
 /// `~/.lv2` and the system directories.
 pub fn default_paths() -> Vec<PathBuf> {
     if let Some(v) = std::env::var_os("LV2_PATH") {
@@ -393,6 +395,14 @@ pub fn default_paths() -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = faderframe_core::paths::portable_plugins("LV2")
         .into_iter()
         .collect();
+    if cfg!(windows) {
+        for var in ["APPDATA", "COMMONPROGRAMFILES"] {
+            if let Some(d) = std::env::var_os(var) {
+                out.push(PathBuf::from(d).join("LV2"));
+            }
+        }
+        return out;
+    }
     if let Some(h) = std::env::var_os("HOME").map(PathBuf::from) {
         out.push(h.join(".lv2"));
     }
