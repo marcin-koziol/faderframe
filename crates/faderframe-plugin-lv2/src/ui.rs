@@ -1,5 +1,6 @@
-//! Plugin UIs: X11 UIs (`ui:X11UI`) embedded into the host's parent
-//! window, else external UIs (kxstudio's `external-ui#Widget`) in windows
+//! Plugin UIs: native UIs — X11 (`ui:X11UI`), on Windows Win32
+//! (`ui:WindowsUI`) — embedded into the host's parent window, else
+//! external UIs (kxstudio's `external-ui#Widget`) in windows
 //! of their own. They talk to the plugin through ports (control values and
 //! atom messages) and may reach the instance itself (`instance-access`,
 //! `data-access`): when the plugin is instantiated again, the UI is made
@@ -40,9 +41,10 @@ fn usable(ui: &Ui) -> bool {
         .all(|f| SUPPORTED.contains(&f.as_str()))
 }
 
-/// The UI to embed: an X11 UI whose required features the host has.
+/// The UI to embed: one of this platform's windows (X11; Win32 on
+/// Windows) whose required features the host has.
 pub fn embeddable(model: &Lv2Plugin) -> Option<&Ui> {
-    model.uis.iter().find(|u| u.is_x11() && usable(u))
+    model.uis.iter().find(|u| u.is_native() && usable(u))
 }
 
 /// The UI that shows a window of its own: an external UI.
@@ -437,7 +439,7 @@ impl Editor {
             e.sized = true;
             e.show();
         } else if !e.sized
-            && let Some(size) = window_size(e.widget as usize as u32)
+            && let Some(size) = window_size(e.widget as usize)
         {
             e.request_size(size);
         }
@@ -549,7 +551,7 @@ impl Editor {
         }
         if !self.sized && self.size_tries < 10 {
             self.size_tries += 1;
-            if let Some(size) = window_size(self.widget as usize as u32) {
+            if let Some(size) = window_size(self.widget as usize) {
                 self.request_size(size);
             }
         }
@@ -583,15 +585,37 @@ fn as_bytes_mut(words: &mut [u64]) -> &mut [u8] {
     bytes
 }
 
-/// The size of an X11 window (an UI's own), when there is one.
-fn window_size(window: u32) -> Option<(u32, u32)> {
+/// The size of a UI's own window (its widget: an X11 window id, on
+/// Windows an `HWND`), when there is one.
+#[cfg(not(windows))]
+fn window_size(widget: usize) -> Option<(u32, u32)> {
     use x11rb::protocol::xproto::ConnectionExt as _;
-    if window == 0 {
-        return None;
-    }
+    let window = u32::try_from(widget).ok().filter(|w| *w != 0)?;
     let (conn, _) = x11rb::connect(None).ok()?;
     let g = conn.get_geometry(window).ok()?.reply().ok()?;
     (g.width > 1 && g.height > 1).then_some((u32::from(g.width), u32::from(g.height)))
+}
+
+/// The size of a UI's own window (its widget: an `HWND`), when there is
+/// one.
+#[cfg(windows)]
+fn window_size(widget: usize) -> Option<(u32, u32)> {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetClientRect, IsWindow};
+    if widget == 0 {
+        return None;
+    }
+    let hwnd = widget as windows_sys::Win32::Foundation::HWND;
+    let mut r = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    // SAFETY: a window handle the UI gave, checked to be a window first.
+    let ok = unsafe { IsWindow(hwnd) != 0 && GetClientRect(hwnd, &mut r) != 0 };
+    let (w, h) = (r.right - r.left, r.bottom - r.top);
+    (ok && w > 1 && h > 1).then_some((w as u32, h as u32))
 }
 
 impl Drop for Editor {
@@ -614,7 +638,7 @@ impl Drop for Editor {
 
 impl PluginEditor for Lv2Instance {
     fn can_embed(&mut self, api: WindowApi) -> bool {
-        api == WindowApi::X11 && embeddable(&self.model).is_some()
+        api == WindowApi::NATIVE && embeddable(&self.model).is_some()
     }
 
     fn can_float(&mut self, _api: WindowApi) -> bool {
@@ -622,8 +646,8 @@ impl PluginEditor for Lv2Instance {
     }
 
     fn open_embedded(&mut self, api: WindowApi, scale: f64) -> Result<(u32, u32), PluginError> {
-        if api != WindowApi::X11 || embeddable(&self.model).is_none() {
-            return Err(PluginError::Failed("no X11 editor".into()));
+        if api != WindowApi::NATIVE || embeddable(&self.model).is_none() {
+            return Err(PluginError::Failed(format!("no {api:?} editor")));
         }
         self.ui_scale = scale;
         // The UI asks for its size once it exists (in `attach`).

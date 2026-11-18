@@ -1,6 +1,6 @@
 [package]
 name = "faderframe-plugin-lv2"
-description = "LV2 plugin hosting for FaderFrame: Turtle metadata, instances, atom MIDI, worker, state, X11 UIs"
+description = "LV2 plugin hosting for FaderFrame: Turtle metadata, instances, atom MIDI, worker, state, X11 and Win32 UIs"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -28,6 +28,9 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]
 cc.workspace = true
