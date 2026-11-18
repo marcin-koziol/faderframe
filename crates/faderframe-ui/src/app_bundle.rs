@@ -88,8 +88,21 @@ fn loader_cache(contents: &Path, dir: &Path) -> Option<PathBuf> {
 }
 
 /// Point the libraries at the bundle's data when running from
-/// FaderFrame.app. Call it first in `main`, before any thread exists.
+/// FaderFrame.app, and on Windows give GTK its simple input method. Call it
+/// first in `main`, before any thread exists.
 pub fn prepare_environment() {
+    // With GTK's Windows IME module FaderFrame is not usable (#62: users
+    // had to set GTK_IM_MODULE themselves), and it brings nothing a DAW
+    // needs; the simple one types the keyboard layout's characters and dead
+    // keys. A GTK_IM_MODULE the user set still wins.
+    #[cfg(windows)]
+    {
+        if std::env::var_os("GTK_IM_MODULE").is_none() {
+            // SAFETY: no other thread exists yet (the caller's promise), so
+            // nothing reads the environment meanwhile.
+            unsafe { std::env::set_var("GTK_IM_MODULE", "gtk-im-context-simple") };
+        }
+    }
     #[cfg(target_os = "macos")]
     {
         let Some(contents) = std::env::current_exe()
