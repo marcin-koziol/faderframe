@@ -1995,6 +1995,12 @@ impl Session {
                 skipped.push((t.id, "muted".into()));
                 continue;
             }
+            // Its role says leave it out (it still plays in the mix: the
+            // master and its buses carry it).
+            if TrackRole::ignored(t.role) {
+                skipped.push((t.id, "its role is Ignore".into()));
+                continue;
+            }
             if !plays_in(&base, t, a, b) {
                 skipped.push((t.id, "nothing plays in the range".into()));
                 continue;
@@ -2060,6 +2066,10 @@ impl Session {
                 }
                 if t.mute {
                     skipped.push((t.id, "muted".into()));
+                    continue;
+                }
+                if TrackRole::ignored(t.role) {
+                    skipped.push((t.id, "its role is Ignore".into()));
                     continue;
                 }
                 analysed.push(t.id);
