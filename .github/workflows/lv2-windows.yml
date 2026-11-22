@@ -1,0 +1,91 @@
+name: LV2 on Windows
+
+# Only on the fork's `lv2-windows` branch (this file is its own commit,
+# never part of a pull request): the Windows package alone, the LV2 tests
+# run on Windows, and the "lv2-windows" pre-release replaced by the build.
+
+on:
+  push:
+    branches: [lv2-windows]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lv2-windows
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gtk4
+            mingw-w64-ucrt-x86_64-gstreamer
+            mingw-w64-ucrt-x86_64-gst-plugins-base
+            mingw-w64-ucrt-x86_64-gst-plugins-good
+            mingw-w64-ucrt-x86_64-gst-plugins-bad
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-adwaita-icon-theme
+            mingw-w64-ucrt-x86_64-librsvg
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-rust
+            mingw-w64-ucrt-x86_64-python
+            zip
+            unzip
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+      - name: LV2 tests on Windows
+        run: cargo test -p faderframe-plugin-lv2
+      - name: Build
+        run: cargo build --release -p faderframe-app
+      - name: Folder, zip and installer
+        run: packaging/windows/bundle.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: |
+            dist/*.zip
+            dist/*-setup.exe
+
+  publish:
+    name: Publish lv2-windows
+    needs: [windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Pre-release "lv2-windows"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l artifacts
+          gh release delete lv2-windows --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          gh release create lv2-windows artifacts/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "FaderFrame LV2 on Windows (${GITHUB_SHA::7})" \
+            --notes "Windows only: upstream's main with LV2 enabled on Windows (pull request to come). LV2 plugins go in %APPDATA%\\LV2 or %COMMONPROGRAMFILES%\\LV2; their own GUIs are not embedded yet (the generic parameter window opens). Not a release: for trying it out."

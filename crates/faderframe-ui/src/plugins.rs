@@ -1,5 +1,6 @@
 //! Plugin formats available to the application: CLAP and VST3 (scanned in
-//! helper processes, cached) next to the built-ins, LV2 on Linux (its
+//! helper processes, cached) next to the built-ins, LV2 on Linux and
+//! Windows (its
 //! Turtle metadata read in process, cached) and Audio Units on macOS
 //! (listed from the system's component registry). Hosted instances run in
 //! helper processes while sandboxing is on
@@ -33,12 +34,12 @@ pub fn prepare_plugin_toolkits() {
 
 const CLAP_CACHE: &str = "clap-scan.json";
 const VST3_CACHE: &str = "vst3-scan.json";
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 const LV2_CACHE: &str = "lv2-scan.json";
 
 /// Bring the LV2 cache up to date (only changed bundles are read again)
 /// and publish it; returns the plugin count and the bundles that failed.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 fn update_lv2() -> (usize, Vec<String>) {
     let path = cache_path(LV2_CACHE);
     let mut cache = faderframe_plugin_lv2::scan::Cache::load(&path);
@@ -59,7 +60,7 @@ pub fn in_process_registry() -> faderframe_plugin_host::PluginRegistry {
     let mut r = faderframe_plugin_host::PluginRegistry::with_builtins();
     r.add_factory(Box::new(faderframe_plugin_clap::ClapFactory::new()));
     r.add_factory(Box::new(faderframe_plugin_vst3::Vst3Factory::new()));
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     r.add_factory(Box::new(faderframe_plugin_lv2::Lv2Factory::new()));
     #[cfg(target_os = "macos")]
     r.add_factory(Box::new(faderframe_plugin_au::AuFactory::new()));
@@ -71,7 +72,7 @@ fn load_catalogs() {
     faderframe_plugin_clap::set_catalog(clap.plugins().cloned().collect());
     let vst3 = ScanCache::load(&cache_path(VST3_CACHE));
     faderframe_plugin_vst3::set_catalog(vst3.plugins().cloned().collect());
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     faderframe_plugin_lv2::set_catalog(
         faderframe_plugin_lv2::scan::Cache::load(&cache_path(LV2_CACHE)).plugins(),
     );
@@ -90,7 +91,7 @@ pub fn install() {
         r.add_factory(Box::new(SandboxedFactory::new(Box::new(
             faderframe_plugin_vst3::Vst3Factory::new(),
         ))));
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", windows))]
         r.add_factory(Box::new(SandboxedFactory::new(Box::new(
             faderframe_plugin_lv2::Lv2Factory::new(),
         ))));
@@ -103,7 +104,7 @@ pub fn install() {
     load_catalogs();
     // Projects may name LV2 plugins: their metadata is up to date before
     // the first engine (stat calls unless a bundle changed).
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     update_lv2();
     if let Ok(exe) = std::env::current_exe() {
         faderframe_plugin_sandbox::set_launcher(faderframe_plugin_sandbox::Launcher {
@@ -210,7 +211,7 @@ pub fn check_helper(format: &str, id: &str, rate: u32, block: u32, paced: bool) 
 pub fn catalog_generation() -> u64 {
     let g = faderframe_plugin_clap::catalog_generation()
         .wrapping_add(faderframe_plugin_vst3::catalog_generation() << 32);
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     let g = g.wrapping_add(faderframe_plugin_lv2::catalog_generation() << 48);
     #[cfg(target_os = "macos")]
     let g = g.wrapping_add(faderframe_plugin_au::catalog_generation() << 48);
@@ -224,7 +225,7 @@ pub fn scanned(format: PluginFormat, id: &str) -> Option<ScannedPlugin> {
         PluginFormat::Vst3 => faderframe_plugin_vst3::catalog(),
         #[cfg(target_os = "macos")]
         PluginFormat::AudioUnit => faderframe_plugin_au::catalog(),
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", windows))]
         PluginFormat::Lv2 => faderframe_plugin_lv2::catalog()
             .iter()
             .map(|p| p.scanned())
@@ -285,13 +286,13 @@ pub fn scan_in_background(retry_failed: bool) -> mpsc::Receiver<ScanReport> {
                 ),
                 "--scan-vst3",
             );
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", windows))]
             let lv2 = {
                 let (n, e) = update_lv2();
                 errors.extend(e);
                 n
             };
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", windows)))]
             let lv2 = 0;
             let report = ScanReport {
                 clap: clap.len(),

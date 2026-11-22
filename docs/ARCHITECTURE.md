@@ -4997,7 +4997,9 @@ headers). The plugin is driven directly, without lilv.
   * Output control ports (meters, latency) are published as atomics.
   * No allocation on the audio thread (`tests/host.rs`, which drives a
     plugin written in the test itself).
-* **Editors** (`ui.rs`): X11 UIs embedded with `ui:parent`
+* **Editors** (`ui.rs`): the platform's UIs — X11, on Windows Win32
+  (`ui:WindowsUI`, `Ui::is_native`; LV2 is hosted on Windows too) —
+  embedded with `ui:parent`
   (`ui::embeddable`), else external UIs in windows of their own
   (`ui::floating`, `can_float`/`open_floating`: the widget's `show`, its
   `run` on the host timer, `hide` before cleanup; the user closing it

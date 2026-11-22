@@ -284,6 +284,12 @@ unsafe extern "C" fn ui_entry(index: u32) -> *const sys::LV2UI_Descriptor {
 /// JUCE writes it, in a file of its own), the external UI's as the older
 /// `ui:binary`; both want the instance.
 fn model(uis: &str) -> Arc<scan::Lv2Plugin> {
+    // The embedded test UI is this platform's kind (Win32 on Windows).
+    let native = if cfg!(windows) {
+        "ui:WindowsUI"
+    } else {
+        "ui:X11UI"
+    };
     static CALLS: AtomicU32 = AtomicU32::new(0);
     let call = CALLS.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!("ff-lv2-ui-{}-{call}.lv2", std::process::id()));
@@ -300,7 +306,7 @@ fn model(uis: &str) -> Arc<scan::Lv2Plugin> {
     {uis} ;
     lv2:port [ a lv2:InputPort , lv2:ControlPort ; lv2:index 0 ; lv2:symbol "gain" ; lv2:name "Gain" ;
           lv2:default 1.0 ; lv2:minimum 0.0 ; lv2:maximum 2.0 ] .
-<urn:faderframe:test#x11-ui> a ui:X11UI ;
+<urn:faderframe:test#x11-ui> a {native} ;
     lv2:binary <none_ui.so> ;
     rdfs:seeAlso <ui.ttl> .
 <urn:faderframe:test#external-ui> a <http://kxstudio.sf.net/ns/lv2ext/external-ui#Widget> ;
@@ -342,7 +348,7 @@ fn the_bundles_uis_are_found_by_either_binary() {
     let _turn = TURN.lock().unwrap_or_else(|e| e.into_inner());
     let m = model("ui:ui <urn:faderframe:test#x11-ui> , <urn:faderframe:test#external-ui>");
     assert_eq!(m.uis.len(), 2, "{:?}", m.uis);
-    let x11 = m.uis.iter().find(|u| u.is_x11()).unwrap();
+    let x11 = m.uis.iter().find(|u| u.is_native()).unwrap();
     assert!(x11.binary.ends_with("none_ui.so"));
     assert!(
         x11.required_features
@@ -364,11 +370,11 @@ fn an_embedded_ui_reaches_its_instance_and_is_made_again_with_it() {
         instance("ui:ui <urn:faderframe:test#x11-ui> , <urn:faderframe:test#external-ui>");
     let first = serial_of(&take_log()[0]);
     let ed = inst.editor().unwrap();
-    assert!(ed.can_embed(WindowApi::X11));
-    assert!(ed.can_float(WindowApi::X11), "the external UI");
-    ed.open_embedded(WindowApi::X11, 1.0).unwrap();
+    assert!(ed.can_embed(WindowApi::NATIVE));
+    assert!(ed.can_float(WindowApi::NATIVE), "the external UI");
+    ed.open_embedded(WindowApi::NATIVE, 1.0).unwrap();
     ed.attach(ParentWindow {
-        api: WindowApi::X11,
+        api: WindowApi::NATIVE,
         handle: 77,
     })
     .unwrap();
@@ -413,9 +419,10 @@ fn an_external_ui_shows_its_own_window_until_the_user_closes_it() {
     let mut inst = instance("ui:ui <urn:faderframe:test#external-ui>");
     let n = serial_of(&take_log()[0]);
     let ed = inst.editor().unwrap();
-    assert!(!ed.can_embed(WindowApi::X11));
-    assert!(ed.can_float(WindowApi::X11));
-    ed.open_floating(WindowApi::X11, "UI Test · Keys").unwrap();
+    assert!(!ed.can_embed(WindowApi::NATIVE));
+    assert!(ed.can_float(WindowApi::NATIVE));
+    ed.open_floating(WindowApi::NATIVE, "UI Test · Keys")
+        .unwrap();
     assert!(ed.is_open());
     ed.raise();
     assert_eq!(
@@ -445,7 +452,8 @@ fn an_external_ui_shows_its_own_window_until_the_user_closes_it() {
 
     // Opened again and closed by the host: hidden, then cleaned up.
     let ed = inst.editor().unwrap();
-    ed.open_floating(WindowApi::X11, "UI Test · Keys").unwrap();
+    ed.open_floating(WindowApi::NATIVE, "UI Test · Keys")
+        .unwrap();
     ed.close();
     assert_eq!(
         take_log(),
@@ -456,4 +464,54 @@ fn an_external_ui_shows_its_own_window_until_the_user_closes_it() {
             format!("external {n} gone"),
         ]
     );
+}
+
+/// A Win32 UI (`ui:WindowsUI`, its details in a file of its own) is read
+/// from its bundle and is the one to embed on Windows — never elsewhere,
+/// where an X11 UI is.
+#[test]
+fn a_windows_ui_is_found_and_embedded_on_windows_only() {
+    let dir = std::env::temp_dir().join(format!("ff-lv2-winui-{}.lv2", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("manifest.ttl"),
+        r#"@prefix lv2: <http://lv2plug.in/ns/lv2core#> .
+@prefix ui: <http://lv2plug.in/ns/extensions/ui#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+<urn:faderframe:test#organ> a lv2:Plugin ;
+    lv2:binary <organ.dll> ;
+    <http://usefulinc.com/ns/doap#name> "Organ" ;
+    ui:ui <urn:faderframe:test#organ-ui> .
+<urn:faderframe:test#organ-ui> a ui:WindowsUI ;
+    ui:binary <organ_ui.dll> ;
+    rdfs:seeAlso <ui.ttl> .
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("ui.ttl"),
+        r#"@prefix lv2: <http://lv2plug.in/ns/lv2core#> .
+@prefix ui: <http://lv2plug.in/ns/extensions/ui#> .
+<urn:faderframe:test#organ-ui>
+    lv2:requiredFeature ui:parent , <http://lv2plug.in/ns/ext/urid#map> ;
+    lv2:optionalFeature ui:resize ;
+    lv2:extensionData ui:idleInterface .
+"#,
+    )
+    .unwrap();
+    let b = scan::describe_bundle(&dir).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let m = &b.plugins[0];
+    assert_eq!(m.uis.len(), 1, "{:?}", m.uis);
+    let ui = &m.uis[0];
+    assert!(ui.is_windows() && !ui.is_x11(), "{}", ui.class);
+    assert!(ui.binary.ends_with("organ_ui.dll"));
+    assert!(
+        ui.required_features
+            .iter()
+            .any(|f| f == sys::uri::UI_PARENT),
+        "from the UI's own file: {:?}",
+        ui.required_features
+    );
+    assert_eq!(ui.is_native(), cfg!(windows), "embedded on Windows only");
 }
