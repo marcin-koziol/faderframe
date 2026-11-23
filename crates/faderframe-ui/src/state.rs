@@ -503,11 +503,14 @@ impl AppState {
 
     pub fn tick(self: &Rc<Self>) {
         let now = Instant::now();
-        let dt = self
-            .last_tick
-            .replace(Some(now))
-            .map_or(1.0 / 60.0, |t| (now - t).as_secs_f32().min(0.25));
-        let (changed, shown) = match self.session.try_borrow_mut() {
+        let since = self.last_tick.replace(Some(now)).map(|t| now - t);
+        let dt = since.map_or(1.0 / 60.0, |d| d.as_secs_f32().min(0.25));
+        let stats = crate::canvas::paint_stats::enabled();
+        let mut parts = crate::canvas::paint_stats::TickParts {
+            interval: since.unwrap_or_default(),
+            ..Default::default()
+        };
+        let (changed, shown) = parts.time("session", || match self.session.try_borrow_mut() {
             Ok(mut s) => {
                 s.tick(dt);
                 (
@@ -516,15 +519,19 @@ impl AppState {
                 )
             }
             Err(_) => (false, false),
-        };
-        if changed {
-            // e.g. a take placed after the recording stopped.
-            self.after_change();
-        } else if shown {
-            // Only what views show (keys held, launcher clips playing).
-            self.redraw_all();
-        }
-        crate::plugin_window::tick(self);
+        });
+        parts.changed = changed;
+        parts.time("views", || {
+            if changed {
+                // e.g. a take placed after the recording stopped.
+                self.after_change();
+            } else if shown {
+                // Only what views show (keys held, launcher clips playing).
+                self.redraw_all();
+            }
+        });
+        parts.time("plugin windows", || crate::plugin_window::tick(self));
+        let rest = Instant::now();
         // Windows views asked for.
         let requests = self
             .session
@@ -652,10 +659,14 @@ impl AppState {
                 s.notify(faderframe_session::NoticeLevel::Info, text);
             }
         }
+        parts.parts.push(("requests", rest.elapsed()));
         let frame = self.frame.get() + 1;
         self.frame.set(frame);
         // Text-heavy chrome updates at ~10 Hz; the time display every frame.
-        self.update_chrome(frame.is_multiple_of(6));
+        parts.time("chrome", || self.update_chrome(frame.is_multiple_of(6)));
+        if stats {
+            crate::canvas::paint_stats::note_tick(parts);
+        }
     }
 
     fn update_chrome(self: &Rc<Self>, full: bool) {
