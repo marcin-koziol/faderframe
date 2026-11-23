@@ -2126,7 +2126,7 @@ impl ViewHost {
 /// Development aid: with `FADERFRAME_PAINT_STATS` set, every canvas logs
 /// how long its view took to paint (building the frame's render nodes) and
 /// the window's frame rate, every two seconds.
-mod paint_stats {
+pub(crate) mod paint_stats {
     use gtk::prelude::*;
     use std::cell::RefCell;
     use std::collections::HashMap;
@@ -2302,6 +2302,98 @@ mod paint_stats {
                 }
                 *since = Some(Instant::now());
             }
+        });
+    }
+
+    /// The app's tick, part by part (`FADERFRAME_PAINT_STATS`): what a frame
+    /// spends besides painting the views.
+    #[derive(Default)]
+    pub struct TickParts {
+        /// Since the previous tick.
+        pub interval: Duration,
+        pub parts: Vec<(&'static str, Duration)>,
+        /// Ticks that rebuilt after a change of the session.
+        pub changed: bool,
+    }
+
+    impl TickParts {
+        pub fn time<T>(&mut self, name: &'static str, f: impl FnOnce() -> T) -> T {
+            let started = Instant::now();
+            let out = f();
+            self.parts.push((name, started.elapsed()));
+            out
+        }
+    }
+
+    #[derive(Default)]
+    struct Part {
+        total: Duration,
+        max: Duration,
+    }
+
+    #[derive(Default)]
+    struct Ticks {
+        ticks: u32,
+        changed: u32,
+        interval: Part,
+        parts: Vec<(&'static str, Part)>,
+        since: Option<Instant>,
+    }
+
+    thread_local! {
+        static TICKS: RefCell<Ticks> = RefCell::default();
+    }
+
+    fn add(part: &mut Part, took: Duration) {
+        part.total += took;
+        part.max = part.max.max(took);
+    }
+
+    /// Note one tick; every 2 s, log the means and the longest.
+    pub fn note_tick(tick: TickParts) {
+        TICKS.with(|t| {
+            let t = &mut *t.borrow_mut();
+            t.ticks += 1;
+            t.changed += u32::from(tick.changed);
+            add(&mut t.interval, tick.interval);
+            for (name, took) in tick.parts {
+                match t.parts.iter_mut().find(|(n, _)| *n == name) {
+                    Some((_, p)) => add(p, took),
+                    None => {
+                        let mut p = Part::default();
+                        add(&mut p, took);
+                        t.parts.push((name, p));
+                    }
+                }
+            }
+            let start = *t.since.get_or_insert_with(Instant::now);
+            if start.elapsed() < Duration::from_secs(2) {
+                return;
+            }
+            let n = f64::from(t.ticks.max(1));
+            let ms = |p: &Part| {
+                format!(
+                    "{:.2}/{:.2}",
+                    p.total.as_secs_f64() * 1e3 / n,
+                    p.max.as_secs_f64() * 1e3
+                )
+            };
+            let parts: Vec<String> = t
+                .parts
+                .iter()
+                .map(|(name, p)| format!("{name} {}", ms(p)))
+                .collect();
+            tracing::info!(
+                "tick: {} ticks ({} rebuilt), interval {} ms; mean/max ms: {}",
+                t.ticks,
+                t.changed,
+                ms(&t.interval),
+                parts.join(", "),
+            );
+            *t = Ticks {
+                since: Some(Instant::now()),
+                ..Ticks::default()
+            };
         });
     }
 }
