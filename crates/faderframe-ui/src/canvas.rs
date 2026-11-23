@@ -2417,6 +2417,108 @@ pub(crate) mod paint_stats {
             };
         });
     }
+
+    /// The window's frames, phase by phase (`FADERFRAME_PAINT_STATS`): each
+    /// handler runs after GTK's own for its phase, so the times between
+    /// them are the update (the ticks), the layout, the paint (snapshot and
+    /// render), and the gap to the next frame (the main loop's other work,
+    /// or waiting for the display).
+    pub fn watch_frames(clock: &gtk::gdk::FrameClock) {
+        #[derive(Default)]
+        struct Phases {
+            begun: Option<Instant>,
+            updated: Option<Instant>,
+            laid_out: Option<Instant>,
+            painted: Option<Instant>,
+            ended: Option<Instant>,
+            frames: u32,
+            update: Part,
+            layout: Part,
+            paint: Part,
+            after: Part,
+            gap: Part,
+            since: Option<Instant>,
+        }
+        thread_local! {
+            static PHASES: RefCell<Phases> = RefCell::default();
+        }
+        fn between(part: &mut Part, from: Option<Instant>, to: Instant) {
+            if let Some(from) = from {
+                add(part, to.saturating_duration_since(from));
+            }
+        }
+        clock.connect_before_paint(|_| {
+            PHASES.with(|p| {
+                let p = &mut *p.borrow_mut();
+                let now = Instant::now();
+                between(&mut p.gap, p.ended.take(), now);
+                p.begun = Some(now);
+                p.updated = None;
+                p.laid_out = None;
+                p.painted = None;
+            });
+        });
+        clock.connect_update(|_| {
+            PHASES.with(|p| {
+                let p = &mut *p.borrow_mut();
+                let now = Instant::now();
+                between(&mut p.update, p.begun, now);
+                p.updated = Some(now);
+            });
+        });
+        clock.connect_layout(|_| {
+            PHASES.with(|p| {
+                let p = &mut *p.borrow_mut();
+                let now = Instant::now();
+                between(&mut p.layout, p.updated.or(p.begun), now);
+                p.laid_out = Some(now);
+            });
+        });
+        clock.connect_paint(|_| {
+            PHASES.with(|p| {
+                let p = &mut *p.borrow_mut();
+                let now = Instant::now();
+                between(&mut p.paint, p.laid_out.or(p.updated).or(p.begun), now);
+                p.painted = Some(now);
+            });
+        });
+        clock.connect_after_paint(|_| {
+            PHASES.with(|p| {
+                let p = &mut *p.borrow_mut();
+                let now = Instant::now();
+                between(&mut p.after, p.painted.or(p.laid_out).or(p.begun), now);
+                p.ended = Some(now);
+                p.frames += 1;
+                let start = *p.since.get_or_insert(now);
+                if now - start < Duration::from_secs(2) {
+                    return;
+                }
+                let n = f64::from(p.frames.max(1));
+                let ms = |part: &Part| {
+                    format!(
+                        "{:.2}/{:.2}",
+                        part.total.as_secs_f64() * 1e3 / n,
+                        part.max.as_secs_f64() * 1e3
+                    )
+                };
+                tracing::info!(
+                    "frames: {} in {:.1} s; mean/max ms: update {}, layout {}, paint {}, after {}, gap {}",
+                    p.frames,
+                    (now - start).as_secs_f64(),
+                    ms(&p.update),
+                    ms(&p.layout),
+                    ms(&p.paint),
+                    ms(&p.after),
+                    ms(&p.gap),
+                );
+                *p = Phases {
+                    ended: Some(now),
+                    since: Some(now),
+                    ..Phases::default()
+                };
+            });
+        });
+    }
 }
 
 /// `FADERFRAME_TRACE_DND=1`: log what drags and drops reach the canvases.

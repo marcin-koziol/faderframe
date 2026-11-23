@@ -415,6 +415,11 @@ fn activate(app: &gtk::Application, options: &RunOptions) -> Rc<AppState> {
     dialogs::install_close_guard(&state, &window);
     dock::realize(&state);
     window.present();
+    if canvas::paint_stats::enabled()
+        && let Some(clock) = window.frame_clock()
+    {
+        canvas::paint_stats::watch_frames(&clock);
+    }
     if start::wanted_at_start(chosen, &prefs) {
         start::present(&state);
     }
