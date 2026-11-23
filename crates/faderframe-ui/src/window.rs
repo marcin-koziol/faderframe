@@ -892,11 +892,49 @@ fn work_area(monitor: &gtk::gdk::Monitor) -> gtk::gdk::Rectangle {
     monitor.geometry()
 }
 
+/// The title bar and borders Windows draws around a window.
+const WINDOW_FRAME: i32 = 48;
+
+/// The menu bar, or one button with the same menus where the title bar
+/// with the menu bar would be wider than the screen: the window can't be
+/// narrower than its title bar, and at 200% on a laptop it ran off the
+/// screen (issue #94). `bar_width` keeps the menu bar's width (a hidden
+/// widget measures nothing).
+fn fold_menus(
+    window: &gtk::ApplicationWindow,
+    header: &gtk::HeaderBar,
+    menubar: &gtk::PopoverMenuBar,
+    button: &gtk::MenuButton,
+    bar_width: &Cell<i32>,
+) {
+    let Some(monitor) = window
+        .surface()
+        .and_then(|s| WidgetExt::display(window).monitor_at_surface(&s))
+    else {
+        return;
+    };
+    let (header_now, ..) = header.measure(gtk::Orientation::Horizontal, -1);
+    let with_bar = if menubar.is_visible() {
+        bar_width.set(menubar.measure(gtk::Orientation::Horizontal, -1).0);
+        header_now
+    } else {
+        let (button_now, ..) = button.measure(gtk::Orientation::Horizontal, -1);
+        header_now - button_now + bar_width.get()
+    };
+    let room = work_area(&monitor).width();
+    let folded = with_bar + WINDOW_FRAME > room;
+    tracing::info!(
+        "window: title bar {with_bar} px with the menu bar, screen {room} px: menus {}",
+        if folded { "in a button" } else { "in the bar" }
+    );
+    menubar.set_visible(!folded);
+    button.set_visible(folded);
+}
+
 /// A window size of `width` × `height` made to fit in `area`, with room
 /// for the window's frame. Sizes that fit (or unknown ones) stay.
 fn fit_to(width: i32, height: i32, area: gtk::gdk::Rectangle) -> (i32, i32) {
-    // The title bar and borders Windows draws around the window.
-    const FRAME: i32 = 48;
+    const FRAME: i32 = WINDOW_FRAME;
     let fit = |size: i32, room: i32| {
         if size <= 0 || room <= FRAME {
             size
@@ -966,11 +1004,18 @@ pub fn build(app: &Rc<AppState>) -> gtk::ApplicationWindow {
     });
 
     let header = gtk::HeaderBar::new();
-    let menubar = gtk::PopoverMenuBar::from_model(Some(&menu_model(
-        &app.recent_menu,
-        &app.custom_themes_menu,
-    )));
+    let menus = menu_model(&app.recent_menu, &app.custom_themes_menu);
+    let menubar = gtk::PopoverMenuBar::from_model(Some(&menus));
     header.pack_start(&menubar);
+    // The same menus behind one button, for screens too narrow for the menu
+    // bar beside the transport ([`fold_menus`]).
+    let menu_button = gtk::MenuButton::builder()
+        .icon_name("open-menu-symbolic")
+        .menu_model(&menus)
+        .tooltip_text("Menu")
+        .visible(false)
+        .build();
+    header.pack_start(&menu_button);
 
     let transport = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     transport.add_css_class("transport");
@@ -1157,6 +1202,32 @@ pub fn build(app: &Rc<AppState>) -> gtk::ApplicationWindow {
     render.set_tooltip_text(Some("Render / export audio (Ctrl+Shift+R)"));
     header.pack_end(&render);
     window.set_titlebar(Some(&header));
+    let bar_width = Rc::new(Cell::new(0));
+    let fold = {
+        let (header, menubar, menu_button) = (header.clone(), menubar.clone(), menu_button.clone());
+        move |w: &gtk::ApplicationWindow| {
+            fold_menus(w, &header, &menubar, &menu_button, &bar_width);
+        }
+    };
+    window.connect_realize(glib::clone!(
+        #[strong]
+        fold,
+        move |w| {
+            fold(w);
+            // Moved to another screen.
+            if let Some(surface) = w.surface() {
+                let weak = w.downgrade();
+                let fold = fold.clone();
+                surface.connect_enter_monitor(move |_, _| {
+                    if let Some(w) = weak.upgrade() {
+                        fold(&w);
+                    }
+                });
+            }
+        }
+    ));
+    // The display's scaling changed.
+    window.connect_scale_factor_notify(fold);
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     // The edit toolbar: full width under the header bar.
