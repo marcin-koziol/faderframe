@@ -104,7 +104,7 @@ use gtk::{gio, glib};
 use state::AppState;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const APP_ID: &str = "io.github.BurningTreeC.FaderFrame";
 
@@ -456,8 +456,11 @@ fn activate(app: &gtk::Application, options: &RunOptions) -> Rc<AppState> {
     // playhead and meters, one tick per frame at the display's rate), and
     // on a timer while no frames come (the window hidden).
     let weak = Rc::downgrade(&state);
-    window.add_tick_callback(move |_, _| match weak.upgrade() {
+    window.add_tick_callback(move |_, clock| match weak.upgrade() {
         Some(s) => {
+            if let Ok(session) = s.session.try_borrow() {
+                session.set_frame_time(Some(frame_instant(clock)));
+            }
             s.tick();
             glib::ControlFlow::Continue
         }
@@ -469,12 +472,28 @@ fn activate(app: &gtk::Application, options: &RunOptions) -> Rc<AppState> {
             if s.ticked_within(Duration::from_millis(40)) {
                 return glib::ControlFlow::Continue;
             }
+            if let Ok(session) = s.session.try_borrow() {
+                session.set_frame_time(None);
+            }
             s.tick();
             glib::ControlFlow::Continue
         }
         None => glib::ControlFlow::Break,
     });
     state
+}
+
+/// The frame clock's time of the frame (GLib's monotonic clock, which GTK
+/// steadies to the display's refresh) as an `Instant`.
+fn frame_instant(clock: &gtk::gdk::FrameClock) -> Instant {
+    let now = Instant::now();
+    let ahead = clock.frame_time() - glib::monotonic_time();
+    let by = Duration::from_micros(ahead.unsigned_abs());
+    if ahead >= 0 {
+        now + by
+    } else {
+        now.checked_sub(by).unwrap_or(now)
+    }
 }
 
 fn run_startup_actions(app: gtk::Application, steps: Vec<String>, i: usize, delay_ms: u64) {

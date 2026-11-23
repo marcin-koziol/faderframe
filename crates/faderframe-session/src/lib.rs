@@ -1836,6 +1836,9 @@ pub struct Session {
     /// The playhead last presented (see [`Session::transport`]): its
     /// position, when, and the run of playback it was in.
     presented: std::cell::Cell<Option<Presented>>,
+    /// When the frame being drawn is shown (the window's frame clock; see
+    /// [`Session::set_frame_time`]).
+    frame_time: std::cell::Cell<Option<Instant>>,
     /// Where the arranger looks at the song now (saved with the project;
     /// the arranger notes it as it paints).
     arranger_place: std::cell::Cell<Option<ViewPlace>>,
@@ -2293,6 +2296,7 @@ impl Session {
             transport: TransportSnapshot::default(),
             shown_position: None,
             presented: std::cell::Cell::new(None),
+            frame_time: std::cell::Cell::new(None),
             arranger_place: std::cell::Cell::new(None),
             project_serial: 0,
             low_latency_limit_ms: DEFAULT_LOW_LATENCY_LIMIT_MS,
@@ -2625,7 +2629,7 @@ impl Session {
     /// `counting_in` while the position stands at the start.
     pub fn transport(&self) -> TransportSnapshot {
         let mut t = self.transport;
-        let now = Instant::now();
+        let now = self.frame_now();
         if self.shown_position.is_none()
             && let Some(p) = self.presented(now)
         {
@@ -2638,6 +2642,24 @@ impl Session {
             t.counting_in = h.counting_in;
         }
         t
+    }
+
+    /// The time of the frame being drawn, from the window's frame clock:
+    /// frames come at uneven moments (a platform's timers, a busy main
+    /// loop), and a playhead placed for the moment it is drawn moves by
+    /// uneven steps; placed for the frame's time it moves evenly. `None`
+    /// outside frames (a timer's tick while the window is hidden).
+    pub fn set_frame_time(&self, at: Option<Instant>) {
+        self.frame_time.set(at);
+    }
+
+    /// The frame's time while it is drawn, else now.
+    fn frame_now(&self) -> Instant {
+        let now = Instant::now();
+        match self.frame_time.get() {
+            Some(at) if at.max(now) - at.min(now) < std::time::Duration::from_millis(50) => at,
+            _ => now,
+        }
     }
 
     /// Counting in before playback, as heard: where on the timeline the
