@@ -882,6 +882,31 @@ pub fn menu_model(recent: &gio::Menu, custom_themes: &gio::Menu) -> gio::Menu {
     menu
 }
 
+/// What of `monitor` a window may cover (logical pixels): on Windows
+/// without the taskbar.
+fn work_area(monitor: &gtk::gdk::Monitor) -> gtk::gdk::Rectangle {
+    #[cfg(windows)]
+    if let Some(m) = monitor.downcast_ref::<gdk4_win32::Win32Monitor>() {
+        return gdk4_win32::Win32Monitor::workarea(m);
+    }
+    monitor.geometry()
+}
+
+/// A window size of `width` × `height` made to fit in `area`, with room
+/// for the window's frame. Sizes that fit (or unknown ones) stay.
+fn fit_to(width: i32, height: i32, area: gtk::gdk::Rectangle) -> (i32, i32) {
+    // The title bar and borders Windows draws around the window.
+    const FRAME: i32 = 48;
+    let fit = |size: i32, room: i32| {
+        if size <= 0 || room <= FRAME {
+            size
+        } else {
+            size.min(room - FRAME)
+        }
+    };
+    (fit(width, area.width()), fit(height, area.height()))
+}
+
 /// Build the main window and register its chrome with the app state.
 pub fn build(app: &Rc<AppState>) -> gtk::ApplicationWindow {
     let window = gtk::ApplicationWindow::builder()
@@ -891,6 +916,23 @@ pub fn build(app: &Rc<AppState>) -> gtk::ApplicationWindow {
         .default_height(960)
         .show_menubar(false)
         .build();
+    // The first size fits the screen it opens on: at 200% a laptop's screen
+    // is smaller than the default, and Windows let the window run off it
+    // (the close button and the mixer's edge out of sight) until it was
+    // minimized and restored (issue #94).
+    window.connect_realize(|w| {
+        let Some(monitor) = w
+            .surface()
+            .and_then(|s| WidgetExt::display(w).monitor_at_surface(&s))
+        else {
+            return;
+        };
+        let (width, height) = w.default_size();
+        let (fit_w, fit_h) = fit_to(width, height, work_area(&monitor));
+        if (fit_w, fit_h) != (width, height) {
+            w.set_default_size(fit_w, fit_h);
+        }
+    });
 
     let header = gtk::HeaderBar::new();
     let menubar = gtk::PopoverMenuBar::from_model(Some(&menu_model(
@@ -1252,4 +1294,21 @@ fn platform_label(window: &gtk::ApplicationWindow) -> String {
         gtk::minor_version(),
         gtk::micro_version()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fit_to;
+    use gtk::gdk::Rectangle;
+
+    #[test]
+    fn the_first_size_fits_a_small_screen_and_stays_on_a_big_one() {
+        // A 2560×1600 laptop at 200%, the taskbar taken off.
+        let small = Rectangle::new(0, 0, 1280, 752);
+        assert_eq!(fit_to(1560, 960, small), (1232, 704));
+        let big = Rectangle::new(0, 0, 1920, 1040);
+        assert_eq!(fit_to(1560, 960, big), (1560, 960));
+        // A monitor with no size known leaves it.
+        assert_eq!(fit_to(1560, 960, Rectangle::new(0, 0, 0, 0)), (1560, 960));
+    }
 }
