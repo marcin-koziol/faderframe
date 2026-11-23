@@ -921,17 +921,48 @@ pub fn build(app: &Rc<AppState>) -> gtk::ApplicationWindow {
     // (the close button and the mixer's edge out of sight) until it was
     // minimized and restored (issue #94).
     window.connect_realize(|w| {
+        let (width, height) = w.default_size();
         let Some(monitor) = w
             .surface()
             .and_then(|s| WidgetExt::display(w).monitor_at_surface(&s))
         else {
+            tracing::info!("window: {width}×{height} at realize, no monitor known yet");
             return;
         };
-        let (width, height) = w.default_size();
-        let (fit_w, fit_h) = fit_to(width, height, work_area(&monitor));
+        let area = work_area(&monitor);
+        let (fit_w, fit_h) = fit_to(width, height, area);
+        tracing::info!(
+            "window: {width}×{height} at realize; monitor {}×{}, work area {}×{} at scale {}; fitted {fit_w}×{fit_h}",
+            monitor.geometry().width(),
+            monitor.geometry().height(),
+            area.width(),
+            area.height(),
+            monitor.scale(),
+        );
         if (fit_w, fit_h) != (width, height) {
             w.set_default_size(fit_w, fit_h);
         }
+    });
+    // What the window became once shown, and the least it can be.
+    window.connect_map(|w| {
+        let w = w.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+            let (min_w, ..) = w.measure(gtk::Orientation::Horizontal, -1);
+            let (min_h, ..) = w.measure(gtk::Orientation::Vertical, -1);
+            let surface = w
+                .surface()
+                .map(|s| (s.width(), s.height(), s.scale()))
+                .unwrap_or_default();
+            tracing::info!(
+                "window: shown {}×{} (default {:?}, least {min_w}×{min_h}); surface {}×{} at scale {}",
+                w.width(),
+                w.height(),
+                w.default_size(),
+                surface.0,
+                surface.1,
+                surface.2,
+            );
+        });
     });
 
     let header = gtk::HeaderBar::new();
