@@ -508,6 +508,9 @@ fn run_startup_actions(app: gtk::Application, steps: Vec<String>, i: usize, dela
 
 /// Run the application; returns the process exit code.
 pub fn run(options: RunOptions) -> glib::ExitCode {
+    if canvas::paint_stats::enabled() {
+        canvas::paint_stats::forward_glib_log();
+    }
     plugins::install();
     let app = gtk::Application::builder()
         .application_id(APP_ID)

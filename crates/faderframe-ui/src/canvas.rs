@@ -2415,6 +2415,56 @@ pub(crate) mod paint_stats {
             std::env::var("FADERFRAME_GPU_PAINTER").ok(),
             gl_driver()
         );
+        // Why GTK's GPU renderers were not used: each tried on the window.
+        if let Some(surface) = window.surface() {
+            for name in ["GskGLRenderer", "GskVulkanRenderer"] {
+                tracing::info!("renderer: {name}: {}", try_renderer(name, &surface));
+            }
+        }
+    }
+
+    /// Realize GTK's renderer `name` for `surface` (and let it go): "works"
+    /// or why not.
+    fn try_renderer(name: &str, surface: &gtk::gdk::Surface) -> String {
+        use gtk::glib::prelude::*;
+        let Some(ty) = gtk::glib::Type::from_name(name) else {
+            return "not in this GTK".into();
+        };
+        let Ok(renderer) = gtk::glib::Object::with_type(ty).downcast::<gtk::gsk::Renderer>() else {
+            return "not a renderer".into();
+        };
+        match renderer.realize(Some(surface)) {
+            Ok(()) => {
+                renderer.unrealize();
+                "works".into()
+            }
+            Err(e) => format!("fails: {e}"),
+        }
+    }
+
+    /// GLib's and GTK's own messages (warnings, `GSK_DEBUG` output) into
+    /// the log as well.
+    pub fn forward_glib_log() {
+        use gtk::glib::LogLevel;
+        gtk::glib::log_set_writer_func(|level, fields| {
+            let field = |key: &str| {
+                fields
+                    .iter()
+                    .find(|f| f.key() == key)
+                    .and_then(|f| f.value_str())
+                    .unwrap_or("")
+                    .to_owned()
+            };
+            let (domain, message) = (field("GLIB_DOMAIN"), field("MESSAGE"));
+            match level {
+                LogLevel::Error | LogLevel::Critical | LogLevel::Warning => {
+                    tracing::warn!("{domain}: {message}")
+                }
+                LogLevel::Message => tracing::info!("{domain}: {message}"),
+                LogLevel::Info | LogLevel::Debug => tracing::debug!("{domain}: {message}"),
+            }
+            gtk::glib::log_writer_default(level, fields)
+        });
     }
 
     #[cfg(windows)]
