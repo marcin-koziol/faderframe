@@ -2423,6 +2423,66 @@ pub(crate) mod paint_stats {
     /// them are the update (the ticks), the layout, the paint (snapshot and
     /// render), and the gap to the next frame (the main loop's other work,
     /// or waiting for the display).
+    /// Log what draws the window: GTK's renderer, the GPU painter's
+    /// setting and (Windows) the GL driver GTK's display gives.
+    pub fn log_renderer(window: &gtk::ApplicationWindow) {
+        let renderer = window
+            .renderer()
+            .map(|r| r.type_().name().to_string())
+            .unwrap_or_else(|| "none yet".into());
+        tracing::info!(
+            "renderer: {renderer} (GSK_RENDERER {:?}, FADERFRAME_GPU_PAINTER {:?}); GL {}",
+            std::env::var("GSK_RENDERER").ok(),
+            std::env::var("FADERFRAME_GPU_PAINTER").ok(),
+            gl_driver()
+        );
+    }
+
+    #[cfg(windows)]
+    fn gl_driver() -> String {
+        use windows_sys::Win32::Graphics::OpenGL::{
+            GL_RENDERER, GL_VENDOR, GL_VERSION, glGetString,
+        };
+        let Some(display) = gtk::gdk::Display::default() else {
+            return "no display".into();
+        };
+        let context = match display.create_gl_context() {
+            Ok(c) => c,
+            Err(e) => return format!("unavailable: {e}"),
+        };
+        if let Err(e) = context.realize() {
+            return format!("unavailable: {e}");
+        }
+        context.make_current();
+        let get = |name: u32| {
+            // SAFETY: a context is current; GL owns the null-terminated
+            // string (or returns null).
+            let p = unsafe { glGetString(name) };
+            if p.is_null() {
+                "?".to_string()
+            } else {
+                // SAFETY: as above.
+                unsafe { std::ffi::CStr::from_ptr(p.cast()) }
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        };
+        let out = format!(
+            "{} · {} · {} ({})",
+            get(GL_VENDOR),
+            get(GL_RENDERER),
+            get(GL_VERSION),
+            context.type_().name()
+        );
+        gtk::gdk::GLContext::clear_current();
+        out
+    }
+
+    #[cfg(not(windows))]
+    fn gl_driver() -> String {
+        "not asked (Windows only)".into()
+    }
+
     pub fn watch_frames(clock: &gtk::gdk::FrameClock) {
         #[derive(Default)]
         struct Phases {

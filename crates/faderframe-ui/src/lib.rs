@@ -419,6 +419,12 @@ fn activate(app: &gtk::Application, options: &RunOptions) -> Rc<AppState> {
         && let Some(clock) = window.frame_clock()
     {
         canvas::paint_stats::watch_frames(&clock);
+        let w = window.downgrade();
+        glib::timeout_add_local_once(std::time::Duration::from_secs(1), move || {
+            if let Some(w) = w.upgrade() {
+                canvas::paint_stats::log_renderer(&w);
+            }
+        });
     }
     if start::wanted_at_start(chosen, &prefs) {
         start::present(&state);
