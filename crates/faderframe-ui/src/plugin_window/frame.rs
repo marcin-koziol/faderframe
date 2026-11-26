@@ -85,7 +85,11 @@ impl Frame {
         size: (u32, u32),
         resizable: bool,
     ) -> Option<Frame> {
-        if std::env::var_os("FADERFRAME_EDITOR_HEADER").is_some_and(|v| v == "0") {
+        // Under Direct Composition a plugin drawing the classic way into
+        // a child of the frame stays invisible: a plain window instead.
+        if std::env::var_os("FADERFRAME_EDITOR_HEADER").is_some_and(|v| v == "0")
+            || crate::drawing::direct_composition()
+        {
             return None;
         }
         let display = x.frame_display()?;
