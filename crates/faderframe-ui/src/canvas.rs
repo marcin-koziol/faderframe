@@ -2437,10 +2437,35 @@ pub(crate) mod paint_stats {
             gl_driver()
         );
         // Why GTK's GPU renderers were not used: each tried on the window.
+        let mut gl_works = false;
         if let Some(surface) = window.surface() {
             for name in ["GskGLRenderer", "GskVulkanRenderer"] {
-                tracing::info!("renderer: {name}: {}", try_renderer(name, &surface));
+                let result = try_renderer(name, &surface);
+                gl_works |= name == "GskGLRenderer" && result == "works";
+                tracing::info!("renderer: {name}: {result}");
             }
+        }
+        // Experiment (#94): a window GTK gave its software renderer though
+        // GL works is made again, once.
+        if renderer == "GskCairoRenderer"
+            && gl_works
+            && std::env::var("FADERFRAME_RENDERER_RETRY").as_deref() == Ok("1")
+        {
+            tracing::info!("renderer: making the window again");
+            window.set_visible(false);
+            WidgetExt::unrealize(window);
+            window.present();
+            let w = window.downgrade();
+            gtk::glib::timeout_add_local_once(Duration::from_secs(1), move || {
+                if let Some(w) = w.upgrade() {
+                    tracing::info!(
+                        "renderer: now {}",
+                        w.renderer()
+                            .map(|r| r.type_().name().to_string())
+                            .unwrap_or_else(|| "none".into())
+                    );
+                }
+            });
         }
     }
 
