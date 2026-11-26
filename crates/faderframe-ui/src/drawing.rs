@@ -54,6 +54,40 @@ pub fn software() -> bool {
 /// crocus driver draws with. Call it first in `main` (the program's own
 /// run, not a helper's), before any thread exists.
 pub fn prepare_renderer() {
+    choose_renderer();
+    #[cfg(windows)]
+    enable_direct_composition();
+}
+
+/// On Windows GTK 4.24 draws with OpenGL or Vulkan only through Direct
+/// Composition, which it leaves off unless `GDK_DEBUG` has `dcomp` (it
+/// draws black borders around windows with some graphics cards, GTK
+/// #7567). Without it GTK falls back to software, too slow for a large
+/// window at 200 % (#94), so turn it on unless the renderer is software.
+/// Software is the way out where the borders show.
+#[cfg(windows)]
+fn enable_direct_composition() {
+    if software() {
+        return;
+    }
+    let debug = std::env::var("GDK_DEBUG").unwrap_or_default();
+    if debug
+        .split([',', ':', ';', ' ', '\t'])
+        .any(|key| key.eq_ignore_ascii_case("dcomp") || key.eq_ignore_ascii_case("all"))
+    {
+        return;
+    }
+    let value = if debug.trim().is_empty() {
+        "dcomp".to_owned()
+    } else {
+        format!("{debug},dcomp")
+    };
+    // SAFETY: no other thread exists yet (the caller's promise), so nothing
+    // reads the environment meanwhile.
+    unsafe { std::env::set_var("GDK_DEBUG", value) };
+}
+
+fn choose_renderer() {
     if std::env::var_os("GSK_RENDERER").is_some() {
         return;
     }
