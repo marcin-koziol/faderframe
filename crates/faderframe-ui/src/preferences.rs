@@ -210,12 +210,18 @@ fn general_page(app: &Rc<AppState>) -> gtk::Widget {
             .position(|r| r.0 == prefs.renderer)
             .unwrap_or(0) as u32,
     );
-    renderer.set_tooltip_text(Some(
+    renderer.set_tooltip_text(Some(if cfg!(windows) {
+        "What GTK draws the windows with, from the next start. Automatic draws in \
+         software. OpenGL and Vulkan draw with the graphics card through Direct \
+         Composition, which is much faster on large windows, but with some graphics cards \
+         it draws black borders around windows and menus; plugin editors then open \
+         without the header."
+    } else {
         "What GTK draws the windows with, from the next start. Software needs no graphics \
          driver: use it when the driver crashes or draws wrongly. Automatic draws in \
          software on Intel graphics up to Haswell (Mesa's crocus driver crashes under \
-         GTK's renderer); choose OpenGL to try the graphics chip anyway.",
-    ));
+         GTK's renderer); choose OpenGL to try the graphics chip anyway."
+    }));
     row(&g, 10, "Renderer", &renderer);
     renderer.connect_selected_notify(|d| {
         let r = crate::drawing::RENDERERS[(d.selected() as usize).min(3)];

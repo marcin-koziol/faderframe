@@ -54,6 +54,49 @@ pub fn software() -> bool {
 /// crocus driver draws with. Call it first in `main` (the program's own
 /// run, not a helper's), before any thread exists.
 pub fn prepare_renderer() {
+    choose_renderer();
+    #[cfg(windows)]
+    enable_direct_composition();
+}
+
+/// On Windows GTK 4.24 draws with OpenGL or Vulkan only through Direct
+/// Composition, which it leaves off unless `GDK_DEBUG` has `dcomp`: with
+/// some graphics cards it draws everything meant to be transparent black,
+/// such as the borders around windows and popovers (GTK #7567; #94). So
+/// GTK's choice there is software, and choosing OpenGL or Vulkan (the
+/// preference or `GSK_RENDERER`) turns Direct Composition on.
+#[cfg(windows)]
+fn enable_direct_composition() {
+    let gpu = std::env::var("GSK_RENDERER").is_ok_and(|r| {
+        ["gl", "ngl", "opengl", "vulkan"].contains(&r.to_ascii_lowercase().as_str())
+    });
+    if !gpu || direct_composition() {
+        return;
+    }
+    let debug = std::env::var("GDK_DEBUG").unwrap_or_default();
+    let value = if debug.trim().is_empty() {
+        "dcomp".to_owned()
+    } else {
+        format!("{debug},dcomp")
+    };
+    // SAFETY: no other thread exists yet (the caller's promise), so nothing
+    // reads the environment meanwhile.
+    unsafe { std::env::set_var("GDK_DEBUG", value) };
+}
+
+/// Whether GTK draws through Direct Composition (Windows, `GDK_DEBUG` with
+/// `dcomp`). Its windows then have no surface for drawing the classic way,
+/// so plugin editors that draw so would stay invisible in them.
+pub fn direct_composition() -> bool {
+    cfg!(windows)
+        && std::env::var("GDK_DEBUG").is_ok_and(|debug| {
+            debug
+                .split([',', ':', ';', ' ', '\t'])
+                .any(|key| key.eq_ignore_ascii_case("dcomp") || key.eq_ignore_ascii_case("all"))
+        })
+}
+
+fn choose_renderer() {
     if std::env::var_os("GSK_RENDERER").is_some() {
         return;
     }
